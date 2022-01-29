@@ -35,7 +35,7 @@ handleCapitalization :: Options -> String -> String
 handleCapitalization o = B.bool id (map C.toUpper) $ oCapitalize o
 
 handleExcitedness :: Options -> String -> String
-handleExcitedness o = B.bool id ("ZOMG " ++) $ oExcited o
+handleExcitedness o = B.bool id ("Ow yeah baby! " ++) $ oExcited o
 
 loadContents :: Options -> IO (Either String String)
 loadContents o =
