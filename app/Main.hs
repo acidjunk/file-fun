@@ -1,8 +1,13 @@
--- app/Main.hs
+
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import qualified Control.Exception as E
+import           Control.Monad.Reader
+import           Control.Monad.Except
 import qualified Data.Bifunctor as BF
 import qualified Data.Bool as B
 import qualified Data.Char as C
@@ -13,9 +18,18 @@ import           Options.Applicative
 data Options = Options
     { oCapitalize :: Bool
     , oExcited :: Bool
+    , oSearch :: Bool
     , oStdIn :: Bool
     , oFileToRead :: Maybe String
     }
+
+type AppConfig = MonadReader Options
+data AppError
+    = IOError E.IOException
+
+newtype App a = App {
+    runApp :: ReaderT Options (ExceptT AppError IO) a
+} deriving (Monad, Functor, Applicative, AppConfig, MonadIO, MonadError AppError)
 
 -- program
 
@@ -23,26 +37,39 @@ main :: IO ()
 main = runProgram =<< parseCLI
 
 runProgram :: Options -> IO ()
-runProgram o =
-    putStr =<< (handleExcitedness o . handleCapitalization o <$> getSource o)
+runProgram o = either renderError return =<< runExceptT (runReaderT (runApp run) o)
 
+renderError :: AppError -> IO ()
+renderError (IOError e) = do
+    putStrLn "There was an error:"
+    putStrLn $ "  " ++ show e
+
+run :: App ()
+run = liftIO . putStr
+    =<< handleExcitedness
+    =<< handleCapitalization
+    =<< handleSearch
+    =<< getSource
+    
 -- data retrieval and transformation
+getSource :: App String
+getSource = B.bool loadContents (liftIO getContents) =<< asks oStdIn
 
-getSource :: Options -> IO String
-getSource o = B.bool (either id id <$> loadContents o) getContents $ oStdIn o
+handleCapitalization :: AppConfig m => String -> m String
+handleCapitalization s = B.bool s (map C.toUpper s) <$> asks oCapitalize
 
-handleCapitalization :: Options -> String -> String
-handleCapitalization o = B.bool id (map C.toUpper) $ oCapitalize o
+handleExcitedness :: AppConfig m => String -> m String
+handleExcitedness s = B.bool s ("Ow yeah baby! " ++ s) <$> asks oExcited
 
-handleExcitedness :: Options -> String -> String
-handleExcitedness o = B.bool id ("Ow yeah baby! " ++) $ oExcited o
+handleSearch :: AppConfig m => String -> m String
+handleSearch s = B.bool s ("Starting search...") <$> asks oSearch
 
-loadContents :: Options -> IO (Either String String)
-loadContents o =
-    maybe defaultResponse readFileFromOptions $ oFileToRead o
+loadContents :: App String
+loadContents =
+    maybe defaultResponse readFileFromOptions =<< asks oFileToRead
   where
-    readFileFromOptions f = BF.first show <$> safeReadFile f
-    defaultResponse = return $ Right "This is fun!"
+    readFileFromOptions f = either throwError return =<< BF.first IOError <$> liftIO (safeReadFile f)
+    defaultResponse = return "This is fun!"
 
 -- CLI parsing
 
@@ -55,6 +82,7 @@ parseOptions :: Parser Options
 parseOptions = Options
     <$> (switch $ long "capitalize")
     <*> (switch $ long "excited")
+    <*> (switch $ long "search")
     <*> (switch $ long "stdin")
     <*> (optional $ strOption $ long "file")
 
